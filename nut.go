@@ -256,23 +256,6 @@ func (c *nutCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-func parseName(s string) (name string, host string) {
-	idx := strings.IndexByte(s, '@')
-	if idx == -1 {
-		return s, "localhost:3439"
-	}
-	return s[:idx], s[idx+1:]
-}
-
-func (c *nutCollector) getNUTNames(host string) ([]string, error) {
-	conn, err := Dial(host)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
-	return conn.UPSs()
-}
-
 func (c *nutCollector) readNUT(conn *Client, name string, ch chan<- prometheus.Metric) error {
 	vars, err := conn.Variables(name)
 	if err != nil {
