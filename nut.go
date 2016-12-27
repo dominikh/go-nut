@@ -1,14 +1,132 @@
-package nut_exporter
+package nut
 
 import (
-	"bytes"
+	"bufio"
+	"errors"
+	"fmt"
 	"log"
-	"os/exec"
+	"net"
 	"strconv"
 	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
+
+type Client struct {
+	conn net.Conn
+	br   *bufio.Reader
+}
+
+func Dial(addr string) (*Client, error) {
+	_, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		addr = net.JoinHostPort(addr, "3493")
+	}
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	return NewClient(conn), nil
+}
+
+func NewClient(conn net.Conn) *Client {
+	return &Client{conn, bufio.NewReader(conn)}
+}
+
+func (c *Client) Close() error {
+	return c.conn.Close()
+}
+
+func (c *Client) list(typ string) ([]string, error) {
+	cmd := "LIST " + typ
+	if err := c.write(cmd); err != nil {
+		return nil, err
+	}
+	l, err := c.read()
+	if err != nil {
+		return nil, err
+	}
+	expected := "BEGIN " + cmd
+	if l != expected {
+		return nil, fmt.Errorf("expected %q, got %q", expected, l)
+	}
+
+	var lines []string
+	expected = typ + " "
+	for {
+		l, err := c.read()
+		if err != nil {
+			return nil, err
+		}
+		if l == "END "+cmd {
+			break
+		}
+		if !strings.HasPrefix(l, expected) {
+			return nil, fmt.Errorf("expected %q, got %q", expected, l)
+		}
+		l = l[len(expected):]
+		lines = append(lines, l)
+	}
+	return lines, nil
+}
+
+func (c *Client) UPSs() ([]string, error) {
+	lines, err := c.list("UPS")
+	if err != nil {
+		return nil, err
+	}
+
+	var upss []string
+	for _, l := range lines {
+		idx := strings.IndexByte(l, ' ')
+		if idx == -1 {
+			return nil, errors.New("protocol error")
+		}
+		ups := l[:idx]
+		upss = append(upss, ups)
+	}
+	return upss, nil
+}
+
+func (c *Client) Variables(ups string) (map[string]string, error) {
+	lines, err := c.list("VAR " + ups)
+	if err != nil {
+		return nil, err
+	}
+	vars := map[string]string{}
+	for _, l := range lines {
+		idx := strings.IndexByte(l, ' ')
+		if idx == -1 {
+			return nil, errors.New("protocol error")
+		}
+		k := l[:idx]
+		v := l[idx+1:]
+		v, err = strconv.Unquote(v)
+		if err != nil {
+			return nil, err
+		}
+
+		vars[k] = v
+	}
+	return vars, nil
+}
+
+func (c *Client) write(s string) error {
+	_, err := c.conn.Write([]byte(s + "\n"))
+	return err
+}
+
+func (c *Client) read() (string, error) {
+	l, err := c.br.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	if len(l) > 0 {
+		l = l[:len(l)-1]
+	}
+	return l, nil
+}
 
 var descriptions = map[string]struct {
 	name string
@@ -86,7 +204,7 @@ var descriptions = map[string]struct {
 	"battery.packs.bad":       {"battery_packs_bad", "Number of bad battery packs"},
 }
 
-func NewNUTCollector(names []string, hosts []string) prometheus.Collector {
+func NewCollector(hosts []string) prometheus.Collector {
 	const namespace = "nut"
 
 	descs := map[string]*prometheus.Desc{}
@@ -100,14 +218,12 @@ func NewNUTCollector(names []string, hosts []string) prometheus.Collector {
 	}
 
 	return &nutCollector{
-		names: names,
 		hosts: hosts,
 		descs: descs,
 	}
 }
 
 type nutCollector struct {
-	names []string
 	hosts []string
 	descs map[string]*prometheus.Desc
 }
@@ -119,53 +235,55 @@ func (c *nutCollector) Describe(ch chan<- *prometheus.Desc) {
 }
 
 func (c *nutCollector) Collect(ch chan<- prometheus.Metric) {
-	names := append(([]string)(nil), c.names...)
 	for _, host := range c.hosts {
-		hn, err := c.getNUTNames(host)
+		conn, err := Dial(host)
 		if err != nil {
+			log.Printf("error connecting to NUT server: %s", err)
 			continue
 		}
-		names = append(names, hn...)
-	}
-	for _, name := range names {
-		if err := c.readNUT(name, ch); err != nil {
-			log.Printf("error reading UPS values: %s", err)
+		upss, err := conn.UPSs()
+		if err != nil {
+			log.Printf("error getting list of UPSs: %s", err)
+			_ = conn.Close()
+			continue
 		}
+		for _, ups := range upss {
+			if err := c.readNUT(conn, ups, ch); err != nil {
+				log.Printf("error reading UPS values: %s", err)
+			}
+		}
+		_ = conn.Close()
 	}
+}
+
+func parseName(s string) (name string, host string) {
+	idx := strings.IndexByte(s, '@')
+	if idx == -1 {
+		return s, "localhost:3439"
+	}
+	return s[:idx], s[idx+1:]
 }
 
 func (c *nutCollector) getNUTNames(host string) ([]string, error) {
-	cmd := exec.Command("upsc", "-l", host)
-	out, err := cmd.Output()
+	conn, err := Dial(host)
 	if err != nil {
 		return nil, err
 	}
-	names := strings.Split(string(out), "\n")
-	if len(names) > 0 {
-		names = names[:len(names)-1]
-	}
-	return names, nil
+	defer conn.Close()
+	return conn.UPSs()
 }
 
-func (c *nutCollector) readNUT(name string, ch chan<- prometheus.Metric) error {
-	cmd := exec.Command("upsc", name)
-	out, err := cmd.Output()
+func (c *nutCollector) readNUT(conn *Client, name string, ch chan<- prometheus.Metric) error {
+	vars, err := conn.Variables(name)
 	if err != nil {
 		return err
 	}
-
 	labels := map[string]string{}
 	values := map[string]float64{}
 	for k := range descriptions {
 		values[k] = 0
 	}
-	for _, l := range bytes.Split(out, []byte("\n")) {
-		parts := bytes.SplitN(l, []byte(": "), 2)
-		if len(parts) != 2 {
-			continue
-		}
-		k, v := string(parts[0]), string(parts[1])
-
+	for k, v := range vars {
 		switch k {
 		case "device.model", "device.mfr", "device.serial", "device.type":
 			labels[k] = v
