@@ -16,7 +16,7 @@ import (
 
 func main() {
 	fHosts := flag.String("h", "localhost", "Space-separated list of hosts to collect")
-	fListen := flag.String("l", ":9100", "Address and port to listen on")
+	fListen := flag.String("l", ":9230", "Address and port to listen on")
 	flag.Parse()
 
 	c := nutcollector.New(strings.Fields(*fHosts))
