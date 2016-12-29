@@ -1,7 +1,9 @@
 package main
 
 import (
+	"flag"
 	"net/http"
+	"strings"
 
 	"honnef.co/go/nut/nutcollector"
 
@@ -10,8 +12,12 @@ import (
 )
 
 func main() {
-	c := nutcollector.New([]string{"localhost"})
+	fHosts := flag.String("h", "localhost", "Space-separated list of hosts to collect")
+	fListen := flag.String("l", ":9100", "Address and port to listen on")
+	flag.Parse()
+
+	c := nutcollector.New(strings.Fields(*fHosts))
 	prometheus.MustRegister(c)
 	http.Handle("/metrics", promhttp.Handler())
-	http.ListenAndServe(":9999", nil)
+	http.ListenAndServe(*fListen, nil)
 }
