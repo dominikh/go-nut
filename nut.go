@@ -1,3 +1,7 @@
+// Package nut implements the Network UPS Tools network protocol.
+//
+// This package only implements those functions necessary for the
+// nut_exporter; it is therefore not complete.
 package nut
 
 import (
@@ -12,11 +16,14 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// A Client wraps a connection to a NUT server.
 type Client struct {
 	conn net.Conn
 	br   *bufio.Reader
 }
 
+// Dial dials a NUT server using TCP. If the address does not contain
+// a port number, it will default to 3493.
 func Dial(addr string) (*Client, error) {
 	_, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -30,10 +37,12 @@ func Dial(addr string) (*Client, error) {
 	return NewClient(conn), nil
 }
 
+// NewClient wraps an existing net.Conn.
 func NewClient(conn net.Conn) *Client {
 	return &Client{conn, bufio.NewReader(conn)}
 }
 
+// Close closes the connection.
 func (c *Client) Close() error {
 	return c.conn.Close()
 }
@@ -71,6 +80,7 @@ func (c *Client) list(typ string) ([]string, error) {
 	return lines, nil
 }
 
+// UPSs returns a list of all UPSs on the server.
 func (c *Client) UPSs() ([]string, error) {
 	lines, err := c.list("UPS")
 	if err != nil {
@@ -89,6 +99,7 @@ func (c *Client) UPSs() ([]string, error) {
 	return upss, nil
 }
 
+// Variables returns all variables and their values for a UPS.
 func (c *Client) Variables(ups string) (map[string]string, error) {
 	lines, err := c.list("VAR " + ups)
 	if err != nil {
@@ -204,6 +215,8 @@ var descriptions = map[string]struct {
 	"battery.packs.bad":       {"battery_packs_bad", "Number of bad battery packs"},
 }
 
+// NewCollector returns a Prometheus collector, collecting statistics
+// from all UPSs on the hosts.
 func NewCollector(hosts []string) prometheus.Collector {
 	const namespace = "nut"
 
