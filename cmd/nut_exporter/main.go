@@ -4,6 +4,7 @@ package main
 
 import (
 	"flag"
+	"log"
 	"net/http"
 	"strings"
 
@@ -21,5 +22,5 @@ func main() {
 	c := nutcollector.New(strings.Fields(*fHosts))
 	prometheus.MustRegister(c)
 	http.Handle("/metrics", promhttp.Handler())
-	http.ListenAndServe(*fListen, nil)
+	log.Fatal(http.ListenAndServe(*fListen, nil))
 }
