@@ -1,3 +1,5 @@
+// Command nut_exporter exports UPSs on one or more NUT servers to
+// Prometheus.
 package main
 
 import (
