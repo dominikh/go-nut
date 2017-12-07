@@ -97,7 +97,7 @@ func New(hosts []string) prometheus.Collector {
 		descs[k] = prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "", v.name),
 			v.desc,
-			[]string{"model", "mfr", "serial", "type"},
+			[]string{"name", "model", "mfr", "serial", "type"},
 			nil,
 		)
 	}
@@ -192,7 +192,7 @@ func (c *nutCollector) readNUT(conn *nut.Client, name string, ch chan<- promethe
 	}
 
 	labelValues := []string{
-		labels["device.model"], labels["device.mfr"], labels["device.serial"], labels["device.type"],
+		name, labels["device.model"], labels["device.mfr"], labels["device.serial"], labels["device.type"],
 	}
 
 	for k, v := range values {
