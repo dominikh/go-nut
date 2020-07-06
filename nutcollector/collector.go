@@ -148,9 +148,6 @@ func (c *nutCollector) readNUT(conn *nut.Client, name string, ch chan<- promethe
 	}
 	labels := map[string]string{}
 	values := map[string]float64{}
-	for k := range descriptions {
-		values[k] = 0
-	}
 	for k, v := range vars {
 		switch k {
 		case "device.model", "device.mfr", "device.serial", "device.type":
